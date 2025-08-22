@@ -3,6 +3,8 @@ import os
 import sys
 import webbrowser
 import pandas as pd
+import zipfile
+import tempfile
 from tkinter import filedialog
 from Modules.settings import SettingsWindow
 from Modules.blacklist import BlacklistManager
@@ -12,88 +14,97 @@ from Modules.helpers import get_db_path, get_log_dir
 from Modules.logger import logger
 
 def open_settings_window(app):
-    """Ayarlar penceresini açar."""
     SettingsWindow(app.root, app.settings, app)
 
 def export_to_excel(app):
-    """Mevcut treeview'daki veriyi Excel'e aktarır."""
     try:
         file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx", 
             filetypes=[("Excel Dosyaları", "*.xlsx")], 
             title="Excel'e Aktar"
         )
+        if not file_path: return
         
-        if file_path:
-            data = [app.tree.item(item)['values'] for item in app.tree.get_children()]
-            if not data:
-                CustomMessageBox(app.root, "Uyarı", "Aktarılacak veri yok.", 'info')
-                return
-            
-            df = pd.DataFrame(data, columns=app.tree["columns"])
-            df.to_excel(file_path, index=False)
-            
-            CustomMessageBox(app.root, "Başarılı", 
-                f"Veriler '{os.path.basename(file_path)}' dosyasına aktarıldı.", 'info')
-            logger.log_info(f"Excel'e aktarıldı: {file_path}")
-            
+        records = app.db.get_filtered_records(app.year_var, app.month_var, search_term=app.search_var.get())
+        if not records:
+            CustomMessageBox(app.root, "Uyarı", "Aktarılacak veri yok.", 'info')
+            return
+        
+        columns = ["ID", "Plaka", "Dorse Plaka", "Sürücü", "Telefon", "Sürücü Firması", "Gelinen Firma", "Giriş Zamanı", "Çıkış Zamanı", "Durum", "Notlar"]
+        df = pd.DataFrame(records, columns=columns)
+        df.to_excel(file_path, index=False)
+        
+        CustomMessageBox(app.root, "Başarılı", f"Veriler başarıyla aktarıldı.", 'info')
     except Exception as e:
         logger.log_error("Excel aktarım hatası", e)
         CustomMessageBox(app.root, "Hata", f"Excel'e aktarım sırasında hata oluştu: {e}", 'info')
 
 def open_custom_report_generator(app):
-    """Özel rapor oluşturucu penceresini açar."""
     CustomReportGenerator(app.root, app.db)
 
 def open_blacklist_manager(app):
-    """Kara liste yöneticisi penceresini açar."""
     BlacklistManager(app.root, app.db)
 
 def manual_backup(app):
-    """Manuel yedekleme işlemini tetikler."""
     app.backup_manager.perform_backup(manual=True)
 
 def restore_from_backup(app):
-    """Yedekten geri yükleme işlemini yönetir."""
+    """Sıkıştırılmış veya normal yedekten geri yükleme yapar."""
     try:
         file_path = filedialog.askopenfilename(
-            initialdir=app.settings['backup_path'], 
+            initialdir=app.settings.get('backup_path', 'Yedekler'), 
             title="Yedek Seçin", 
-            filetypes=[("Veritabanı Dosyaları", "*.db")]
+            filetypes=[("Yedek Dosyaları", "*.zip *.db")]
         )
+        if not file_path: return
+
+        if not CustomMessageBox(app.root, "Onay", "Mevcut veritabanı seçilenle değiştirilecek. Bu işlem geri alınamaz. Emin misiniz?", 'yesno').result:
+            return
+
+        app.db.db.close() # Mevcut veritabanı bağlantısını kapat
         
-        if file_path:
-            confirm_dialog = CustomMessageBox(app.root, "Onay", 
-                "Mevcut veritabanı seçilenle değiştirilecek. Bu işlem geri alınamaz. Emin misiniz?", 'yesno')
-            
-            if confirm_dialog.result:
-                app.db.db.close()
-                import shutil
-                shutil.copyfile(file_path, get_db_path())
-                
-                CustomMessageBox(app.root, "Başarılı", 
-                    "Veritabanı geri yüklendi. Programın doğru çalışması için yeniden başlatılacak.", 'info')
-                logger.log_info(f"Veritabanı geri yüklendi: {file_path}")
-                
-                app.root.destroy()
-                os.execl(sys.executable, sys.executable, *sys.argv)
+        db_to_restore = file_path
+        temp_dir = None
+
+        # Eğer dosya sıkıştırılmışsa, önce geçici bir dizine aç
+        if file_path.endswith(".zip"):
+            temp_dir = tempfile.mkdtemp()
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                # Zip içindeki ilk .db dosyasını bul ve aç
+                db_filename = next((f for f in zip_ref.namelist() if f.endswith('.db')), None)
+                if not db_filename:
+                    raise Exception(".zip arşivi içinde .db dosyası bulunamadı.")
+                zip_ref.extract(db_filename, temp_dir)
+                db_to_restore = os.path.join(temp_dir, db_filename)
+
+        # Geri yükleme işlemini yap
+        import shutil
+        shutil.copyfile(db_to_restore, get_db_path())
+
+        # Geçici dosyaları temizle
+        if temp_dir:
+            shutil.rmtree(temp_dir)
+
+        CustomMessageBox(app.root, "Başarılı", "Veritabanı geri yüklendi. Program yeniden başlatılacak.", 'info')
+        logger.log_info(f"Veritabanı geri yüklendi: {file_path}")
+        
+        app.root.destroy()
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
     except Exception as e:
         logger.log_error("Geri yükleme hatası", e)
         CustomMessageBox(app.root, "Hata", f"Geri yükleme sırasında hata: {e}", 'info')
+        # Hata durumunda programı yeniden başlat ki eski veritabanı açılsın
+        app.root.destroy()
+        os.execl(sys.executable, sys.executable, *sys.argv)
+
 
 def show_error_logs(app):
-    """Hata kayıtları klasörünü açar."""
     log_dir = get_log_dir()
-    
     if os.path.exists(log_dir) and os.listdir(log_dir):
-        try:
-            os.startfile(log_dir)
-        except AttributeError:
-            webbrowser.open(log_dir)
-    else:
-        CustomMessageBox(app.root, "Bilgi", "Henüz kaydedilmiş bir hata bulunmuyor.", 'info')
+        try: os.startfile(log_dir)
+        except AttributeError: webbrowser.open(f'file://{os.path.realpath(log_dir)}')
+    else: CustomMessageBox(app.root, "Bilgi", "Henüz kaydedilmiş bir hata bulunmuyor.", 'info')
 
 def show_about(app):
-    """Hakkında penceresini gösterir."""
     AboutWindow(app.root)

@@ -12,12 +12,13 @@ DEFAULT_SETTINGS = {
     "font_size": "Normal", 
     "backup_freq": "Günlük", 
     "backup_path": "Yedekler", 
-    "daily_retention": "7 Gün",
+    "daily_retention": "45 Gün",
     "gunluk_temizleme": "30 Gün",
-    "hata_temizleme": "3 Ay",
+    "hata_temizleme": "30 Gün",
     "enable_virtualization": True,
     "virtualization_threshold": 1000,
-    "page_size": 100
+    "page_size": 100,
+    "enable_backup_compression": True  # <-- YENİ EKLENDİ
 }
 
 def get_app_path():
@@ -58,6 +59,7 @@ def load_settings():
     try:
         with open(settings_file, 'r', encoding='utf-8') as f:
             settings = json.load(f)
+            # Var olmayan ayarlar için varsayılanları ekle
             for key, value in DEFAULT_SETTINGS.items():
                 settings.setdefault(key, value)
             return settings
@@ -79,15 +81,11 @@ def save_settings(settings):
 def temizleme_ayarini_gune_cevir(ayar):
     """Temizleme ayarını gün sayısına çevirir"""
     temizleme_map = {
-        "1 Gün": 1,
-        "7 Gün": 7,
-        "30 Gün": 30,
-        "3 Ay": 90,
-        "6 Ay": 180,
-        "1 Yıl": 365,
-        "Temizleme": 0  # Temizleme yapma
+        "1 Gün": 1, "7 Gün": 7, "30 Gün": 30,
+        "3 Ay": 90, "6 Ay": 180, "1 Yıl": 365,
+        "Temizleme": 0
     }
-    return temizleme_map.get(ayar, 30)  # Varsayılan 30 gün
+    return temizleme_map.get(ayar, 30)
 
 def cleanup_logs(settings):
     """Logları ayarlara göre temizler"""
@@ -96,67 +94,42 @@ def cleanup_logs(settings):
         gunluk_dir = get_gunluk_dir()
         
         gunluk_temizleme = temizleme_ayarini_gune_cevir(settings.get('gunluk_temizleme', '30 Gün'))
-        hata_temizleme = temizleme_ayarini_gune_cevir(settings.get('hata_temizleme', '3 Ay'))
+        hata_temizleme = temizleme_ayarini_gune_cevir(settings.get('hata_temizleme', '30 Gün'))
         
-        # Günlük kayıtlarını temizle
-        if gunluk_temizleme > 0:
-            gunluk_cutoff = datetime.now() - timedelta(days=gunluk_temizleme)
-            for filename in os.listdir(gunluk_dir):
-                if filename.startswith("gunluk_") and filename.endswith(".log"):
+        def _clean_directory(directory, prefix, suffix, cutoff_days):
+            if cutoff_days <= 0: return
+            cutoff_date = datetime.now() - timedelta(days=cutoff_days)
+            for filename in os.listdir(directory):
+                if filename.startswith(prefix) and filename.endswith(suffix):
                     try:
-                        file_date_str = filename.replace("gunluk_", "").replace(".log", "")
-                        file_date = datetime.strptime(file_date_str, "%Y-%m-%d")
-                        if file_date < gunluk_cutoff:
-                            os.remove(os.path.join(gunluk_dir, filename))
-                    except (ValueError, IndexError): 
+                        date_str = filename.replace(prefix, "").replace(suffix, "").split('_')[0]
+                        file_date = datetime.strptime(date_str, "%Y-%m-%d")
+                        if file_date < cutoff_date:
+                            os.remove(os.path.join(directory, filename))
+                    except (ValueError, IndexError):
                         continue
         
-        # Hata kayıtlarını temizle
-        if hata_temizleme > 0:
-            hata_cutoff = datetime.now() - timedelta(days=hata_temizleme)
-            for filename in os.listdir(log_dir):
-                if filename.endswith("_hatalar.txt"):
-                    try:
-                        file_date_str = filename.split('_')[0]
-                        file_date = datetime.strptime(file_date_str, "%Y-%m-%d")
-                        if file_date < hata_cutoff:
-                            os.remove(os.path.join(log_dir, filename))
-                    except (ValueError, IndexError): 
-                        continue
+        _clean_directory(gunluk_dir, "gunluk_", ".log", gunluk_temizleme)
+        _clean_directory(log_dir, "", "_hatalar.txt", hata_temizleme)
                         
     except Exception as e:
         log_error("Log temizleme hatası", e)
 
 def manual_cleanup_logs():
-    """Manuel log temizleme - tüm eski logları siler"""
+    """Manuel log temizleme - bugünküler hariç tüm logları siler"""
     try:
-        log_dir = get_log_dir()
-        gunluk_dir = get_gunluk_dir()
-        
         deleted_count = 0
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        def _clean_manual(directory, check_func):
+            nonlocal deleted_count
+            for filename in os.listdir(directory):
+                if check_func(filename, today_str):
+                    try: os.remove(os.path.join(directory, filename)); deleted_count += 1
+                    except OSError: pass
         
-        # Tüm günlük dosyalarını sil (bugünkü hariç)
-        today_file = f"gunluk_{datetime.now().strftime('%Y-%m-%d')}.log"
-        for filename in os.listdir(gunluk_dir):
-            if filename.startswith("gunluk_") and filename.endswith(".log") and filename != today_file:
-                try:
-                    os.remove(os.path.join(gunluk_dir, filename))
-                    deleted_count += 1
-                except:
-                    pass
-        
-        # Tüm hata dosyalarını sil (bugünkü hariç)
-        today_error_file = f"{datetime.now().strftime('%Y-%m-%d')}_hatalar.txt"
-        for filename in os.listdir(log_dir):
-            if filename.endswith("_hatalar.txt") and filename != today_error_file:
-                try:
-                    os.remove(os.path.join(log_dir, filename))
-                    deleted_count += 1
-                except:
-                    pass
-        
+        _clean_manual(get_gunluk_dir(), lambda f, t: f.startswith("gunluk_") and t not in f)
+        _clean_manual(get_log_dir(), lambda f, t: f.endswith("_hatalar.txt") and not f.startswith(t))
         return deleted_count
-        
     except Exception as e:
         log_error("Manuel log temizleme hatası", e)
         return 0
@@ -166,24 +139,10 @@ def log_error(message, exception=None):
     try:
         log_dir = get_log_dir()
         log_file = os.path.join(log_dir, f"{datetime.now().strftime('%Y-%m-%d')}_hatalar.txt")
-        
         with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f"\n{'='*50}\n")
-            f.write(f"Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Hata: {message}\n")
-            
+            f.write(f"\n{'='*50}\nZaman: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nHata: {message}\n")
             if exception:
-                f.write(f"Exception Türü: {type(exception).__name__}\n")
-                f.write(f"Exception Mesajı: {str(exception)}\n")
-                f.write(f"Traceback:\n")
+                f.write(f"Exception Türü: {type(exception).__name__}\nException Mesajı: {str(exception)}\nTraceback:\n")
                 traceback.print_exc(file=f)
-                
             f.write(f"{'='*50}\n\n")
-            
-    except Exception as log_exception:
-        # Konsola yazdır ama tekrar hata verme döngüsüne girmeyelim
-        print(f"HATA KAYDI OLUŞTURULAMADI: {log_exception}")
-
-def setup_logging(settings):
-    """Gelişmiş logging kurulumu - Artık logger.py'de"""
-    pass
+    except Exception: pass
