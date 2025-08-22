@@ -15,13 +15,13 @@ from Modules.logger import logger
 from Modules.virtualized_treeview import VirtualizedTreeview
 from Modules.custom_windows import CustomMessageBox
 
-# YENİ UI importları
+# UI importları
 from Modules.ui.menu import create_main_menu
 from Modules.ui.main_tab_widgets import create_form_frame, create_filter_frame, create_actions_frame
 from Modules.ui.reports_tab import create_reports_tab
 from Modules.ui.treeview_setup import create_treeview, populate_treeview_data, create_right_click_menu, update_right_click_menu_state
 
-# YENİ Handler importları
+# Handler importları
 from Modules.handlers import main_handlers, menu_handlers, window_handlers
 
 class VehicleApp:
@@ -55,10 +55,8 @@ class VehicleApp:
             raise
 
     def setup_variables(self):
-        """Uygulama genelindeki değişkenleri ve durumu (state) ayarlar."""
         self.last_backup_date = datetime.now().date() - timedelta(days=1)
         self.use_virtualization_for_current_data = False
-        
         self.placeholder_map = {
             "Plaka": "Plaka giriniz", "Dorse": "Dorse plakası (varsa)", 
             "Sürücü": "Sürücü adı soyadı", "Telefon": "Telefon numarası", 
@@ -66,14 +64,12 @@ class VehicleApp:
         }
 
     def apply_styles(self):
-        """Uygulama genelindeki stilleri ayarlar."""
         style = ttk.Style()
         style.configure('Bold.TLabel', font=('Segoe UI', 9, 'bold'))
-        style.configure("Success.TButton") # Temanın kendi stillerini kullan
+        style.configure("Success.TButton")
         style.configure("Danger.TButton")
 
     def center_window(self):
-        """Pencereyi ekranda ortalar."""
         self.root.update_idletasks()
         width = self.root.winfo_width()
         height = self.root.winfo_height()
@@ -82,7 +78,6 @@ class VehicleApp:
         self.root.geometry(f'{width}x{height}+{x}+{y}')
 
     def create_widgets(self):
-        """Ana UI bileşenlerini oluşturur ve yerleştirir."""
         main_container = ttk.Frame(self.root)
         main_container.pack(expand=True, fill="both")
         
@@ -105,7 +100,6 @@ class VehicleApp:
         self.tree.bind("<<TreeviewSelect>>", self.update_action_buttons_state)
 
     def create_menu_bar(self):
-        """Menü çubuğunu oluşturur ve komutları bağlar."""
         menu_commands = {
             'settings': lambda: menu_handlers.open_settings_window(self),
             'export_excel': lambda: menu_handlers.export_to_excel(self),
@@ -120,7 +114,6 @@ class VehicleApp:
         self.menu_bar = create_main_menu(self.root, menu_commands)
 
     def create_main_tab_widgets(self):
-        """Ana sekmedeki tüm bileşenleri oluşturur."""
         form_data = create_form_frame(self.main_tab, self.placeholder_map, lambda: main_handlers.add_record(self), self.clear_form)
         self.entries, self.notes_entry = form_data['entries'], form_data['notes_entry']
         
@@ -145,7 +138,6 @@ class VehicleApp:
         self.tree.bind("<Button-3>", self.show_right_click_menu)
 
     def create_pagination_controls(self):
-        """Sayfalama kontrol widget'larını oluşturur."""
         self.prev_page_button = ttk.Button(self.pagination_frame, text="<< Önceki Sayfa", command=self._prev_page)
         self.prev_page_button.pack(side='left', padx=5)
         self.page_info_label = ttk.Label(self.pagination_frame, text="Sayfa 1/1", anchor="center")
@@ -155,12 +147,10 @@ class VehicleApp:
         self.pagination_frame.grid_remove()
         
     def create_reports_tab_widgets(self):
-        """Raporlar sekmesi bileşenlerini oluşturur."""
         reports_data = create_reports_tab(self.reports_tab, lambda: window_handlers.update_reports_data(self))
         self.start_date_var, self.end_date_var, self.report_widgets = reports_data['start_date_var'], reports_data['end_date_var'], reports_data['report_widgets']
 
     def setup_system_status(self, parent):
-        """Sistem durum çubuğunu kurar."""
         ttk.Separator(parent, orient='horizontal').pack(side='bottom', fill='x', padx=10)
         status_bar = ttk.Frame(parent)
         status_bar.pack(side='bottom', fill='x', padx=10, pady=5)
@@ -184,10 +174,9 @@ class VehicleApp:
         self.error_status_label = ttk.Label(error_frame, text="-", font=("Segoe UI", 9), cursor="hand2"); self.error_status_label.pack(side='left', padx=5)
         self.error_status_label.bind("<Button-1>", lambda e: menu_handlers.show_error_logs(self))
         
-        self.root.after(1000, self.update_status_bar) # İlk güncelleme 1sn sonra
+        self.root.after(1000, self.update_status_bar)
 
     def update_status_bar(self):
-        """Durum çubuğundaki bilgileri periyodik olarak günceller."""
         try:
             db_status = self.db.check_connection()
             self.db_status_label.config(text="✅ Bağlı" if db_status else "❌ Bağlantı Hatası", foreground="green" if db_status else "red")
@@ -236,7 +225,7 @@ class VehicleApp:
     
     def check_virtualization_and_populate(self):
         total_records = self.db.db.get_record_count()
-        threshold = self.settings.get("virtualization_threshold", 1000)
+        threshold = self.settings.get("virtualization_threshold", 100)
         self.use_virtualization_for_current_data = self.settings.get("enable_virtualization", True) and total_records > threshold
         self.populate_treeview()
 
@@ -257,6 +246,10 @@ class VehicleApp:
             logger.log_error("Treeview doldurma hatası", e)
 
     def _process_records_for_display(self, records):
+        """
+        Veritabanı kayıtlarını Sanal Treeview için uygun formata dönüştürür.
+        Artık (değerler, etiketler) formatında bir yapı döndürür.
+        """
         processed = []
         for record in records:
             (id, plaka, dorse, surucu, tel, s_firma, g_firma, entry, exit, status, notes) = record
@@ -264,10 +257,18 @@ class VehicleApp:
                 entry_date = datetime.strptime(entry, "%Y-%m-%d %H:%M").strftime("%d.%m.%Y") if entry else "-"
                 entry_time = datetime.strptime(entry, "%Y-%m-%d %H:%M").strftime("%H:%M") if entry else "-"
                 exit_zaman = datetime.strptime(exit, "%Y-%m-%d %H:%M").strftime("%d.%m.%Y %H:%M") if exit else "-"
-            except: entry_date, entry_time, exit_zaman = entry, "", exit
+            except (ValueError, TypeError):
+                entry_date, entry_time, exit_zaman = entry, "", exit
+            
             note_display = "🗒️ Not Var" if notes and notes.strip() else ""
-            tag = 'checked_out' if status == 'checked_out' else 'inside'
-            processed.append((id, entry_date, entry_time, plaka, dorse, surucu, tel, s_firma, g_firma, note_display, exit_zaman, tag))
+            tag = ('checked_out',) if status == 'checked_out' else ('inside',)
+            
+            record_values = (id, entry_date, entry_time, plaka, dorse, surucu, tel, s_firma, g_firma, note_display, exit_zaman)
+            
+            # --- DEĞİŞİKLİK BURADA ---
+            processed.append((record_values, tag))
+            # --- DEĞİŞİKLİK BİTTİ ---
+
         return processed
 
     def update_status_counts(self):
@@ -337,7 +338,6 @@ class VehicleApp:
         editor.transient(self.root); editor.grab_set()
 
     def add_empty_row(self):
-        """Boş satır ekleme özelliği için bir yer tutucu."""
         CustomMessageBox(self.root, "Bilgi", "Bu özellik şu anda aktif değil.", 'info')
 
     def _prev_page(self):

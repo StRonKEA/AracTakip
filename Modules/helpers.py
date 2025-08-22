@@ -16,9 +16,9 @@ DEFAULT_SETTINGS = {
     "gunluk_temizleme": "30 Gün",
     "hata_temizleme": "30 Gün",
     "enable_virtualization": True,
-    "virtualization_threshold": 1000,
+    "virtualization_threshold": 100,  # <-- DEĞİŞİKLİK BURADA (150'den 100'e düşürüldü)
     "page_size": 100,
-    "enable_backup_compression": True  # <-- YENİ EKLENDİ
+    "enable_backup_compression": True
 }
 
 def get_app_path():
@@ -59,7 +59,6 @@ def load_settings():
     try:
         with open(settings_file, 'r', encoding='utf-8') as f:
             settings = json.load(f)
-            # Var olmayan ayarlar için varsayılanları ekle
             for key, value in DEFAULT_SETTINGS.items():
                 settings.setdefault(key, value)
             return settings
